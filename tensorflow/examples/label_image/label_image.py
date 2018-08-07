@@ -1,27 +1,15 @@
-# Copyright 2017 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+from time import sleep
 
+from picamera import PiCamera
 import argparse
-
+import sys
+import time
+from guizero import App, Text, Picture
 import numpy as np
 import tensorflow as tf
-
 
 def load_graph(model_file):
   graph = tf.Graph()
@@ -34,35 +22,30 @@ def load_graph(model_file):
 
   return graph
 
-
-def read_tensor_from_image_file(file_name,
-                                input_height=299,
-                                input_width=299,
-                                input_mean=0,
-                                input_std=255):
+def read_tensor_from_image_file(file_name, input_height=299, input_width=299,
+				input_mean=0, input_std=255):
   input_name = "file_reader"
   output_name = "normalized"
   file_reader = tf.read_file(file_name, input_name)
   if file_name.endswith(".png"):
-    image_reader = tf.image.decode_png(
-        file_reader, channels=3, name="png_reader")
+    image_reader = tf.image.decode_png(file_reader, channels = 3,
+                                       name='png_reader')
   elif file_name.endswith(".gif"):
-    image_reader = tf.squeeze(
-        tf.image.decode_gif(file_reader, name="gif_reader"))
+    image_reader = tf.squeeze(tf.image.decode_gif(file_reader,
+                                                  name='gif_reader'))
   elif file_name.endswith(".bmp"):
-    image_reader = tf.image.decode_bmp(file_reader, name="bmp_reader")
+    image_reader = tf.image.decode_bmp(file_reader, name='bmp_reader')
   else:
-    image_reader = tf.image.decode_jpeg(
-        file_reader, channels=3, name="jpeg_reader")
+    image_reader = tf.image.decode_jpeg(file_reader, channels = 3,
+                                        name='jpeg_reader')
   float_caster = tf.cast(image_reader, tf.float32)
-  dims_expander = tf.expand_dims(float_caster, 0)
+  dims_expander = tf.expand_dims(float_caster, 0);
   resized = tf.image.resize_bilinear(dims_expander, [input_height, input_width])
   normalized = tf.divide(tf.subtract(resized, [input_mean]), [input_std])
   sess = tf.Session()
   result = sess.run(normalized)
 
   return result
-
 
 def load_labels(label_file):
   label = []
@@ -71,18 +54,16 @@ def load_labels(label_file):
     label.append(l.rstrip())
   return label
 
-
 if __name__ == "__main__":
-  file_name = "tensorflow/examples/label_image/data/grace_hopper.jpg"
-  model_file = \
-    "tensorflow/examples/label_image/data/inception_v3_2016_08_28_frozen.pb"
-  label_file = "tensorflow/examples/label_image/data/imagenet_slim_labels.txt"
-  input_height = 299
-  input_width = 299
-  input_mean = 0
-  input_std = 255
+  file_name = "tf_files/capture.jpg"
+  model_file = "tf_files/retrained_graph.pb"
+  label_file = "tf_files/retrained_labels.txt"
+  input_height = 224
+  input_width = 224
+  input_mean = 128
+  input_std = 128
   input_layer = "input"
-  output_layer = "InceptionV3/Predictions/Reshape_1"
+  output_layer = "final_result"
 
   parser = argparse.ArgumentParser()
   parser.add_argument("--image", help="image to be processed")
@@ -116,25 +97,53 @@ if __name__ == "__main__":
     output_layer = args.output_layer
 
   graph = load_graph(model_file)
-  t = read_tensor_from_image_file(
-      file_name,
-      input_height=input_height,
-      input_width=input_width,
-      input_mean=input_mean,
-      input_std=input_std)
+  t = read_tensor_from_image_file(file_name,
+                                  input_height=input_height,
+                                  input_width=input_width,
+                                  input_mean=input_mean,
+                                  input_std=input_std)
 
   input_name = "import/" + input_layer
   output_name = "import/" + output_layer
-  input_operation = graph.get_operation_by_name(input_name)
-  output_operation = graph.get_operation_by_name(output_name)
+  input_operation = graph.get_operation_by_name(input_name);
+  output_operation = graph.get_operation_by_name(output_name);
+
+def run_program():
 
   with tf.Session(graph=graph) as sess:
-    results = sess.run(output_operation.outputs[0], {
-        input_operation.outputs[0]: t
-    })
+    start = time.time()
+    results = sess.run(output_operation.outputs[0],
+                      {input_operation.outputs[0]: t})
+    end=time.time()
   results = np.squeeze(results)
 
   top_k = results.argsort()[-5:][::-1]
   labels = load_labels(label_file)
+  
+  print('\nEvaluation time (1-image): {:.3f}s\n'.format(end-start))
+  template = "{} (score={:0.5f})"
+  list_of_predictions = []
   for i in top_k:
-    print(labels[i], results[i])
+    print(template.format(labels[i], results[i]))
+    list_of_predictions.append(template.format(labels[i], results[i]))
+  text.value = list_of_predictions[0]
+  sess.close()
+  tf.reset_default_graph()
+  camera = PiCamera()
+  camera.resolution = (1024, 768)
+  sleep(2)
+  print ("Sleeping")
+  camera.capture('tf_files/capture.jpg')
+  camera.close()
+  print("Photo taken")
+    
+app = App(title="Consumabot 0.3", bg="white", layout="auto", width=800, height=480)
+logo = Picture(app, image="elements/consumabot.png", grid=[2,0])
+title = Text(app, text="Currently detected", size=25, font="Arial", grid=[2,1])
+text = Text(app, text="Starting detection", size=22, color="grey", font="Arial", grid=[2,3])
+
+logo.width = 600
+logo.height = 100
+text.repeat(1000, run_program)
+#text.repeat(500, take_picture) # Schedule call to counter() every 1000ms
+app.display()    
